@@ -69,6 +69,8 @@ e2e-verify-release: patch-image deploy test-e2e
 	echo -e '\n\n======= manager logs =======\n\n' && kubectl logs -n gatekeeper-system gatekeeper-controller-manager-0 manager
 
 e2e-helm-deploy:
+	# tiller needs enough permissions to create CRDs
+	kubectl create clusterrolebinding tiller-admin --clusterrole=cluster-admin --serviceaccount=kube-system:default
 	# Download and install helm
 	curl https://raw.githubusercontent.com/helm/helm/master/scripts/get > get_helm.sh
 	chmod 700 get_helm.sh
