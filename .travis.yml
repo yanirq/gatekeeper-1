@@ -39,7 +39,7 @@ jobs:
         - make e2e-bootstrap
         - export KUBECONFIG="$(kind get kubeconfig-path --name="kind")"
         - make e2e-build-load-image IMG=gatekeeper-e2e:latest
-        - make e2e-helm-deploy
+        - make e2e-helm-deploy HELM_REPO=gatekeeper-e2e HRLM_RELEASE=latest
         - make test-e2e
         - echo -e '\n\n======= manager logs =======\n\n' && kubectl logs -n gatekeeper-system gatekeeper-controller-manager-0 manager
 #    - stage: "verify release"
