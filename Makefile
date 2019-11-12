@@ -76,7 +76,7 @@ e2e-helm-deploy:
 	helm init --wait --history-max=5
 	kubectl -n kube-system wait --for=condition=Ready pod -l name=tiller --timeout=300s
 	kubectl -n kube-system describe pod -l name=tiller
-	helm install chart/gatekeeper-operator --release=tiger --set image.repository=${HELM_REPO} --set image.release=${HELM_RELEASE}
+	helm install chart/gatekeeper-operator --name=tiger --set image.repository=${HELM_REPO} --set image.release=${HELM_RELEASE}
 	kubectl -n kube-system describe pod -l name=tiller
 
 # Build manager binary
