@@ -73,13 +73,11 @@ e2e-helm-deploy:
 	curl https://raw.githubusercontent.com/helm/helm/master/scripts/get > get_helm.sh
 	chmod 700 get_helm.sh
 	./get_helm.sh
-	helm init
-	sleep 30
-	kubectl create serviceaccount --namespace kube-system tiller
-	kubectl create clusterrolebinding tiller-cluster-rule --clusterrole=cluster-admin --serviceaccount=kube-system:tiller
-	kubectl patch deploy --namespace kube-system tiller-deploy -p '{"spec":{"template":{"spec":{"serviceAccount":"tiller"}}}}'
+	helm init --wait --history-max=5
 	kubectl -n kube-system wait --for=condition=Ready pod -l name=tiller --timeout=300s
+	kubectl -n kube-system describe pod -l name=tiller
 	helm install chart/gatekeeper-operator
+	kubectl -n kube-system describe pod -l name=tiller
 
 # Build manager binary
 manager: generate fmt vet
