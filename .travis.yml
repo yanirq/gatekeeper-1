@@ -36,12 +36,12 @@ jobs:
     - stage: "helm build, test"
       script:
 #        - make
-        # Running make manager avoids
+        # Running make manager avoids test runs, speeding dev iteration
         - make manager
         - make e2e-bootstrap
         - export KUBECONFIG="$(kind get kubeconfig-path --name="kind")"
         - make e2e-build-load-image IMG=gatekeeper-e2e:latest
-        - make e2e-helm-deploy HELM_REPO=gatekeeper-e2e HRLM_RELEASE=latest
+        - make e2e-helm-deploy HELM_REPO=gatekeeper-e2e HELM_RELEASE=latest
         - make test-e2e
         - echo -e '\n\n======= manager logs =======\n\n' && kubectl logs -n gatekeeper-system gatekeeper-controller-manager-0 manager
 #    - stage: "verify release"
