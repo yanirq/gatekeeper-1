@@ -1,11 +1,8 @@
 /*
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -24,7 +21,6 @@ import (
 	"time"
 
 	opa "github.com/open-policy-agent/frameworks/constraint/pkg/client"
-	"github.com/open-policy-agent/frameworks/constraint/pkg/core/templates"
 	rtypes "github.com/open-policy-agent/frameworks/constraint/pkg/types"
 	"github.com/open-policy-agent/gatekeeper/apis"
 	"github.com/open-policy-agent/gatekeeper/apis/config/v1alpha1"
@@ -47,19 +43,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
+type mutationResponse string
+
+const (
+	mutationErrorResponse   mutationResponse = "error"
+	mutationDenyResponse    mutationResponse = "deny"
+	mutationAllowResponse   mutationResponse = "allow"
+	mutationSkipResponse    mutationResponse = "skip"
+	mutationUnknownResponse mutationResponse = "unknown"
+)
+
 func init() {
-	AddToManagerFuncs = append(AddToManagerFuncs, AddPolicyWebhook)
+	AddToManagerFuncs = append(AddToManagerFuncs, AddMutatingWebhook)
 	if err := apis.AddToScheme(runtimeScheme); err != nil {
 		log.Error(err, "unable to add to scheme")
 		panic(err)
 	}
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/v1/admit,mutating=false,failurePolicy=ignore,groups=*,resources=*,versions=*,name=validation.gatekeeper.sh
-// +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch
+// +kubebuilder:webhook:verbs=create,path=/v1/mutate,mutating=true,failurePolicy=ignore,groups=*,resources=*,versions=*,name=mutation.gatekeeper.sh
+// +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;update
 
-// AddPolicyWebhook registers the policy webhook server with the manager
-func AddPolicyWebhook(mgr manager.Manager, opa *opa.Client, processExcluder *process.Excluder) error {
+// AddMutatingWebhook registers the mutating webhook server with the manager
+func AddMutatingWebhook(mgr manager.Manager, opa *opa.Client, processExcluder *process.Excluder) error {
 	reporter, err := newStatsReporter()
 	if err != nil {
 		return err
@@ -69,7 +75,7 @@ func AddPolicyWebhook(mgr manager.Manager, opa *opa.Client, processExcluder *pro
 	eventBroadcaster.StartRecordingToSink(&clientcorev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	recorder := eventBroadcaster.NewRecorder(
 		scheme.Scheme,
-		corev1.EventSource{Component: "gatekeeper-webhook"})
+		corev1.EventSource{Component: "gatekeeper-mutation-webhook"})
 	wh := &admission.Webhook{
 		Handler: &validationHandler{
 			opa:             opa,
@@ -86,13 +92,13 @@ func AddPolicyWebhook(mgr manager.Manager, opa *opa.Client, processExcluder *pro
 	if err := wh.InjectLogger(log); err != nil {
 		return err
 	}
-	mgr.GetWebhookServer().Register("/v1/admit", wh)
+	mgr.GetWebhookServer().Register("/v1/mutate", wh)
 	return nil
 }
 
-var _ admission.Handler = &validationHandler{}
+var _ admission.Handler = &mutationHandler{}
 
-type validationHandler struct {
+type mutationHandler struct {
 	opa      *opa.Client
 	client   client.Client
 	reporter StatsReporter
@@ -106,18 +112,9 @@ type validationHandler struct {
 	gkNamespace     string
 }
 
-type admissionReqRes string
-
-const (
-	errorResponse   admissionReqRes = "error"
-	denyResponse    admissionReqRes = "deny"
-	allowResponse   admissionReqRes = "allow"
-	unknownResponse admissionReqRes = "unknown"
-)
-
 // Handle the validation request
-func (h *validationHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
-	log := log.WithValues("hookType", "validation")
+func (h *mutationHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
+	log := log.WithValues("hookType", "mutation")
 
 	var timeStart = time.Now()
 
@@ -125,40 +122,19 @@ func (h *validationHandler) Handle(ctx context.Context, req admission.Request) a
 		return admission.ValidationResponse(true, "Gatekeeper does not self-manage")
 	}
 
-	if req.AdmissionRequest.Operation == admissionv1beta1.Delete {
-		// oldObject is the existing object.
-		// It is null for DELETE operations in API servers prior to v1.15.0.
-		// https://github.com/kubernetes/website/pull/14671
-		if req.AdmissionRequest.OldObject.Raw == nil {
-			vResp := admission.ValidationResponse(false, "For admission webhooks registered for DELETE operations, please use Kubernetes v1.15.0+.")
-			vResp.Result.Code = http.StatusInternalServerError
-			return vResp
-		}
-		// For admission webhooks registered for DELETE operations on k8s built APIs or CRDs,
-		// the apiserver now sends the existing object as admissionRequest.Request.OldObject to the webhook
-		// object is the new object being admitted.
-		// It is null for DELETE operations.
-		// https://github.com/kubernetes/kubernetes/pull/76346
-		req.AdmissionRequest.Object = req.AdmissionRequest.OldObject
+	if req.AdmissionRequest.Operation != admissionv1beta1.Create &&
+		req.AdmissionRequest.Operation != admissionv1beta1.Update {
+		return admission.ValidationResponse(true, "Mutating only on create")
 	}
 
-	if userErr, err := h.validateGatekeeperResources(ctx, req); err != nil {
-		vResp := admission.ValidationResponse(false, err.Error())
-		if vResp.Result == nil {
-			vResp.Result = &metav1.Status{}
-		}
-		if userErr {
-			vResp.Result.Code = http.StatusUnprocessableEntity
-		} else {
-			vResp.Result.Code = http.StatusInternalServerError
-		}
-		return vResp
+	if h.isGatekeeperResource(ctx, req) {
+		return admission.ValidationResponse(true, "Not mutating gatekeeper resources")
 	}
 
-	requestResponse := unknownResponse
+	requestResponse := mutationUnknownResponse
 	defer func() {
 		if h.reporter != nil {
-			if err := h.reporter.ReportAdmissionRequest(
+			if err := h.reporter.ReportMutationRequest(
 				requestResponse, time.Since(timeStart)); err != nil {
 				log.Error(err, "failed to report request")
 			}
@@ -167,7 +143,7 @@ func (h *validationHandler) Handle(ctx context.Context, req admission.Request) a
 
 	// namespace is excluded from webhook using config
 	if h.skipExcludedNamespace(req.AdmissionRequest.Namespace) {
-		requestResponse = allowResponse
+		requestResponse = mutationSkipResponse
 		return admission.ValidationResponse(true, "Namespace is set to be ignored by Gatekeeper config")
 	}
 
@@ -179,7 +155,7 @@ func (h *validationHandler) Handle(ctx context.Context, req admission.Request) a
 			vResp.Result = &metav1.Status{}
 		}
 		vResp.Result.Code = http.StatusInternalServerError
-		requestResponse = errorResponse
+		requestResponse = mutationErrorResponse
 		return vResp
 	}
 
@@ -191,15 +167,15 @@ func (h *validationHandler) Handle(ctx context.Context, req admission.Request) a
 			vResp.Result = &metav1.Status{}
 		}
 		vResp.Result.Code = http.StatusForbidden
-		requestResponse = denyResponse
+		requestResponse = mutationDenyResponse
 		return vResp
 	}
 
-	requestResponse = allowResponse
+	requestResponse = mutationAllowResponse
 	return admission.ValidationResponse(true, "")
 }
 
-func (h *validationHandler) getDenyMessages(res []*rtypes.Result, req admission.Request) []string {
+func (h *mutationHandler) getDenyMessages(res []*rtypes.Result, req admission.Request) []string {
 	var msgs []string
 	var resourceName string
 	if len(res) > 0 && (*logDenies || *emitAdmissionEvents) {
@@ -259,7 +235,7 @@ func (h *validationHandler) getDenyMessages(res []*rtypes.Result, req admission.
 	return msgs
 }
 
-func (h *validationHandler) getConfig(ctx context.Context) (*v1alpha1.Config, error) {
+func (h *mutationHandler) getConfig(ctx context.Context) (*v1alpha1.Config, error) {
 	if h.injectedConfig != nil {
 		return h.injectedConfig, nil
 	}
@@ -272,60 +248,17 @@ func (h *validationHandler) getConfig(ctx context.Context) (*v1alpha1.Config, er
 
 // validateGatekeeperResources returns whether an issue is user error (vs internal) and any errors
 // validating internal resources
-func (h *validationHandler) validateGatekeeperResources(ctx context.Context, req admission.Request) (bool, error) {
-	if req.AdmissionRequest.Kind.Group == "templates.gatekeeper.sh" && req.AdmissionRequest.Kind.Kind == "ConstraintTemplate" {
-		return h.validateTemplate(ctx, req)
-	}
-	if req.AdmissionRequest.Kind.Group == "constraints.gatekeeper.sh" {
-		return h.validateConstraint(ctx, req)
-	}
-	return false, nil
-}
-
-func (h *validationHandler) validateTemplate(ctx context.Context, req admission.Request) (bool, error) {
-	templ, _, err := deserializer.Decode(req.AdmissionRequest.Object.Raw, nil, nil)
-	if err != nil {
-		return false, err
-	}
-	unversioned := &templates.ConstraintTemplate{}
-	if err := runtimeScheme.Convert(templ, unversioned, nil); err != nil {
-		return false, err
-	}
-	if _, err := h.opa.CreateCRD(ctx, unversioned); err != nil {
-		return true, err
-	}
-	return false, nil
-}
-
-func (h *validationHandler) validateConstraint(ctx context.Context, req admission.Request) (bool, error) {
-	obj := &unstructured.Unstructured{}
-	if _, _, err := deserializer.Decode(req.AdmissionRequest.Object.Raw, nil, obj); err != nil {
-		return false, err
-	}
-	if err := h.opa.ValidateConstraint(ctx, obj); err != nil {
-		return true, err
+func (h *mutationHandler) isGatekeeperResource(ctx context.Context, req admission.Request) bool {
+	if req.AdmissionRequest.Kind.Group == "templates.gatekeeper.sh" ||
+		req.AdmissionRequest.Kind.Group == "constraints.gatekeeper.sh" {
+		return true
 	}
 
-	enforcementActionString, found, err := unstructured.NestedString(obj.Object, "spec", "enforcementAction")
-	if err != nil {
-		return false, err
-	}
-	enforcementAction := util.EnforcementAction(enforcementActionString)
-	if found && enforcementAction != "" {
-		if !*disableEnforcementActionValidation {
-			err = util.ValidateEnforcementAction(enforcementAction)
-			if err != nil {
-				return false, err
-			}
-		}
-	} else {
-		return true, nil
-	}
-	return false, nil
+	return false
 }
 
 // traceSwitch returns true if a request should be traced
-func (h *validationHandler) reviewRequest(ctx context.Context, req admission.Request) (*rtypes.Responses, error) {
+func (h *mutationHandler) reviewRequest(ctx context.Context, req admission.Request) (*rtypes.Responses, error) {
 	trace, dump := h.tracingLevel(ctx, req)
 	// Coerce server-side apply admission requests into treating namespaces
 	// the same way as older admission requests. See
@@ -350,6 +283,7 @@ func (h *validationHandler) reviewRequest(ctx context.Context, req admission.Req
 	}
 
 	resp, err := h.opa.Review(ctx, review, opa.Tracing(trace))
+	// TODO MUTATE HERE
 	if trace {
 		log.Info(resp.TraceDump())
 	}
@@ -364,7 +298,7 @@ func (h *validationHandler) reviewRequest(ctx context.Context, req admission.Req
 	return resp, err
 }
 
-func (h *validationHandler) tracingLevel(ctx context.Context, req admission.Request) (bool, bool) {
+func (h *mutationHandler) tracingLevel(ctx context.Context, req admission.Request) (bool, bool) {
 	cfg, _ := h.getConfig(ctx)
 	traceEnabled := false
 	dump := false
@@ -387,15 +321,6 @@ func (h *validationHandler) tracingLevel(ctx context.Context, req admission.Requ
 	return traceEnabled, dump
 }
 
-func (h *validationHandler) skipExcludedNamespace(namespace string) bool {
+func (h *mutationHandler) skipExcludedNamespace(namespace string) bool {
 	return h.processExcluder.IsNamespaceExcluded(process.Webhook, namespace)
-}
-
-func getViolationRef(gkNamespace, rkind, rname, rnamespace, ckind, cname, cnamespace string) *corev1.ObjectReference {
-	return &corev1.ObjectReference{
-		Kind:      rkind,
-		Name:      rname,
-		UID:       types.UID(rkind + "/" + rnamespace + "/" + rname + "/" + ckind + "/" + cnamespace + "/" + cname),
-		Namespace: gkNamespace,
-	}
 }
