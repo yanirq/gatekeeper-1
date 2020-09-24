@@ -18,6 +18,8 @@ package controller
 import (
 	"context"
 	"flag"
+
+	"fmt"
 	"os"
 	"sync"
 
@@ -33,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -155,8 +158,13 @@ func AddToManager(m manager.Manager, deps Dependencies) error {
 			return err
 		}
 	}
+	var log = logf.Log.WithName("!!!!MMMMM")
+
 	for _, f := range AddToManagerFuncs {
+		log.Info(" !!!!!!!!!!1 range AddToManagerFuncs  ", fmt.Sprintf("func: %+v", f))
 		if err := f(m); err != nil {
+			log.Error(err, "!!!  ERR   !!!!range AddToManagerFuncs  ERR")
+
 			return err
 		}
 	}

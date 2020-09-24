@@ -54,7 +54,10 @@ const (
 )
 
 func init() {
+	log.Info("!!!!!!!!!!!!!!!  AddToManagerFuncs AddMutatingWebhook")
+
 	AddToManagerFuncs = append(AddToManagerFuncs, AddMutatingWebhook)
+
 	if err := apis.AddToScheme(runtimeScheme); err != nil {
 		log.Error(err, "unable to add to scheme")
 		panic(err)
@@ -66,16 +69,26 @@ func init() {
 
 // AddMutatingWebhook registers the mutating webhook server with the manager
 func AddMutatingWebhook(mgr manager.Manager, opa *opa.Client, processExcluder *process.Excluder) error {
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook")
+
 	reporter, err := newStatsReporter()
 	if err != nil {
 		return err
 	}
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook   1")
+
 	eventBroadcaster := record.NewBroadcaster()
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook   2")
+
 	kubeClient := kubernetes.NewForConfigOrDie(mgr.GetConfig())
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook   3")
+
 	eventBroadcaster.StartRecordingToSink(&clientcorev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	recorder := eventBroadcaster.NewRecorder(
 		scheme.Scheme,
 		corev1.EventSource{Component: "gatekeeper-mutation-webhook"})
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook   4")
+
 	wh := &admission.Webhook{
 		Handler: &validationHandler{
 			opa:             opa,
@@ -87,12 +100,18 @@ func AddMutatingWebhook(mgr manager.Manager, opa *opa.Client, processExcluder *p
 			gkNamespace:     util.GetNamespace(),
 		},
 	}
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook   5")
+
 	// TODO(https://github.com/open-policy-agent/gatekeeper/issues/661): remove log injection if the race condition in the cited bug is eliminated.
 	// Otherwise we risk having unstable logger names for the webhook.
 	if err := wh.InjectLogger(log); err != nil {
 		return err
 	}
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook   6")
+
 	mgr.GetWebhookServer().Register("/v1/mutate", wh)
+	log.Info("!!!!!!!!!!!!!!! AddMutatingWebhook   7")
+
 	return nil
 }
 
@@ -114,6 +133,8 @@ type mutationHandler struct {
 
 // Handle the validation request
 func (h *mutationHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
+	log.Info("!!!!!!!!!! MUTATION           ")
+
 	log := log.WithValues("hookType", "mutation")
 
 	var timeStart = time.Now()

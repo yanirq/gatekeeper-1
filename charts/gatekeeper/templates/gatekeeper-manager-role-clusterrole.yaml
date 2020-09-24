@@ -11,6 +11,14 @@ metadata:
   name: gatekeeper-manager-role
 rules:
 - apiGroups:
+  - security.openshift.io
+  resourceNames:
+    - anyuid
+  resources:
+    - securitycontextconstraints
+  verbs:
+    - use
+- apiGroups:
   - '*'
   resources:
   - '*'

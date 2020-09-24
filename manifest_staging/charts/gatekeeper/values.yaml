@@ -15,7 +15,7 @@ nodeSelector: { kubernetes.io/os: linux }
 affinity: {}
 tolerations: []
 podAnnotations:
-  { container.seccomp.security.alpha.kubernetes.io/manager: runtime/default }
+  {  }
 resources:
   limits:
     cpu: 1000m

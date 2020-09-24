@@ -48,6 +48,8 @@ import (
 )
 
 func init() {
+	log.Info("!!!!!!!!!!!!!!!  AddToManagerFuncs AddPolicyWebhook")
+
 	AddToManagerFuncs = append(AddToManagerFuncs, AddPolicyWebhook)
 	if err := apis.AddToScheme(runtimeScheme); err != nil {
 		log.Error(err, "unable to add to scheme")
@@ -60,6 +62,7 @@ func init() {
 
 // AddPolicyWebhook registers the policy webhook server with the manager
 func AddPolicyWebhook(mgr manager.Manager, opa *opa.Client, processExcluder *process.Excluder) error {
+	log.Info("!!!!!!!!!!!!!!! AddPolicyWebhook")
 	reporter, err := newStatsReporter()
 	if err != nil {
 		return err
@@ -117,6 +120,9 @@ const (
 
 // Handle the validation request
 func (h *validationHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
+	log.Info("!!!!!!!!!! VALIDATION           ")
+	log.Info("!!!!!!!!!! VALIDATION  KIND", "KIND:", req.AdmissionRequest.Kind, "  NAME:", req.AdmissionRequest.Name)
+
 	log := log.WithValues("hookType", "validation")
 
 	var timeStart = time.Now()

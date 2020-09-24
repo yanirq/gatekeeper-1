@@ -19,11 +19,9 @@ spec:
     matchLabels:
       control-plane: controller-manager
       gatekeeper.sh/operation: webhook
-  replicas: 3
+  replicas: 1
   template:
     metadata:
-      annotations:
-        container.seccomp.security.alpha.kubernetes.io/manager: runtime/default
       labels:
         control-plane: controller-manager
         gatekeeper.sh/operation: webhook
@@ -115,8 +113,6 @@ spec:
       labels:
         control-plane: audit-controller
         gatekeeper.sh/operation: audit
-      annotations:
-        container.seccomp.security.alpha.kubernetes.io/manager: runtime/default
     spec:
       containers:
         - args:
