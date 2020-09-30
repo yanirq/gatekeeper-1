@@ -120,7 +120,6 @@ const (
 
 // Handle the validation request
 func (h *validationHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
-	log.Info("!!!!!!!!!! VALIDATION           ")
 	log.Info("!!!!!!!!!! VALIDATION  KIND", "KIND:", req.AdmissionRequest.Kind, "  NAME:", req.AdmissionRequest.Name)
 
 	log := log.WithValues("hookType", "validation")
